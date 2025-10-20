@@ -36,7 +36,6 @@ import com.example.dermtect.ui.components.EmbossedButton
 fun QuestionnaireScreen(navController: NavController) {
     val questionnaireViewModel = remember { QuestionnaireViewModel() }
 
-    val loading by questionnaireViewModel.loading.collectAsState()
     val existingAnswers by questionnaireViewModel.existingAnswers.collectAsState()
     val context = LocalContext.current
 
@@ -58,6 +57,7 @@ fun QuestionnaireScreen(navController: NavController) {
     var showBackDialog by remember { mutableStateOf(false) }
     var showCancelDialog by remember { mutableStateOf(false) }
     var showWarning by remember { mutableStateOf(false) }
+    var loading by remember { mutableStateOf(false) }
 
     var step by rememberSaveable { mutableStateOf(0) }          // 0..7
     var inReview by rememberSaveable { mutableStateOf(false) }  // review screen

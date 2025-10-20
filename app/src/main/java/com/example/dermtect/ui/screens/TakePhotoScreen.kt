@@ -139,6 +139,7 @@ fun TakePhotoScreen(
     val previewView =
         remember { PreviewView(context).apply { scaleType = PreviewView.ScaleType.FILL_CENTER } }
     val coroutineScope = rememberCoroutineScope()
+    var alerted by remember { mutableStateOf(false) }
 
     var hasSaved by remember { mutableStateOf(false) }
     var hasUploaded by remember { mutableStateOf(false) }
@@ -537,6 +538,10 @@ fun TakePhotoScreen(
                             modelFlag = if (r.probability >= 0.0112f) "Malignant" else "Benign"
                             val merged = r.heatmap?.let { overlayBitmaps(image, it, 115) }
                             inferenceResult = r.copy(heatmap = merged)
+
+                            val pPct = r.probability * 100f
+                            alerted = r.probability >= 0.0111f
+
                         } catch (t: TimeoutCancellationException) {
                             inferenceResult = null
                             Toast.makeText(context, "Analysis took too long. Please retake or try again.", Toast.LENGTH_LONG).show()
@@ -615,12 +620,28 @@ fun TakePhotoScreen(
                                                 return@launch
                                             }
 
+                                            val pPct = (inferenceResult?.probability ?: 0f) * 100f
+                                            val shouldSendToDerma = alerted && pPct >= 60f && pPct < 80f
+
                                             val ok = uploadScanWithLabel(
                                                 bitmap = capturedImage!!,
                                                 heatmap = inferenceResult?.heatmap,
                                                 probability = inferenceResult?.probability ?: 0f,
-                                                prediction = modelFlag
+                                                prediction = modelFlag,
+                                                status = if (shouldSendToDerma) "pending" else "completed"
                                             )
+
+                                            if (ok) {
+                                                hasSaved = true
+                                                if (shouldSendToDerma) {
+                                                    Toast.makeText(context, "Case sent to dermatologist for review.", Toast.LENGTH_LONG).show()
+                                                    // optional: navController.navigate("derma_home")
+                                                } else {
+                                                    Toast.makeText(context, "Scan saved successfully.", Toast.LENGTH_SHORT).show()
+                                                }
+                                            } else {
+                                                Toast.makeText(context, "Save failed", Toast.LENGTH_SHORT).show()
+                                            }
                                             Log.d("TakePhotoScreen", "uploadScanWithLabel -> $ok")
                                             if (ok) {
                                                 hasSaved = true
@@ -806,7 +827,8 @@ fun TakePhotoScreen(
         bitmap: Bitmap,            // original cropped photo
         heatmap: Bitmap?,          // heatmap/overlay to save (can be null)
         probability: Float,
-        prediction: String
+        prediction: String,
+        status: String = "completed"
     ): Boolean {
         val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return false
         val db = FirebaseFirestore.getInstance()
@@ -866,7 +888,7 @@ fun TakePhotoScreen(
             "timestamp_ms" to System.currentTimeMillis(),
             "prediction" to prediction,
             "probability" to probability.toDouble(),
-            "status" to "completed",
+            "status" to status,
             "heatmap_url" to heatmapUrl            // may be null if no heatmap
         )
 
