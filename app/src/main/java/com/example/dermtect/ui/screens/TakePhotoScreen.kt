@@ -154,6 +154,8 @@ fun TakePhotoScreen(
     var isSaving by remember { mutableStateOf(false) }
     var liveGateResult by remember { mutableStateOf<SkinGateResult?>(null) }
     var canCapture by remember { mutableStateOf(false) }
+    var showPrivacyDialog by remember { mutableStateOf(false) }
+    var consentShareToDerma by remember { mutableStateOf(false) }
 
     // === NEW: questionnaire state (gate PDF download) ===
     val qvm = remember { QuestionnaireViewModel() }
@@ -541,7 +543,7 @@ fun TakePhotoScreen(
 
                             val pPct = r.probability * 100f
                             alerted = r.probability >= 0.0111f
-
+                            val mediumHigh = alerted && pPct >= 60f && pPct < 80f
                         } catch (t: TimeoutCancellationException) {
                             inferenceResult = null
                             Toast.makeText(context, "Analysis took too long. Please retake or try again.", Toast.LENGTH_LONG).show()
@@ -594,6 +596,14 @@ fun TakePhotoScreen(
                                 },  // << was: { showFullImage = true }
                                 isSaving = isSaving,
                                 onSaveClick = {
+                                    // compute fresh, in case the user waited
+                                    val pPctNow = (inferenceResult?.probability ?: 0f) * 100f
+                                    val mediumHighNow = alerted && pPctNow >= 60f && pPctNow < 80f
+
+                                    if (mediumHighNow) {
+                                        // ask for consent first
+                                        showPrivacyDialog = true
+                                    } else {
                                     coroutineScope.launch {
                                         try {
                                             isSaving = true
@@ -671,7 +681,7 @@ fun TakePhotoScreen(
                                         }finally {
                                             isSaving = false
                                             }
-                                    }
+                                    }}
                                 },
                                 onRetakeClick = {
                                     inferenceResult = null
@@ -741,6 +751,85 @@ fun TakePhotoScreen(
                                 },
                                 onFindClinicClick = { onFindClinicClick() }
                             )
+                            if (showPrivacyDialog) {
+                                com.example.dermtect.ui.components.DialogTemplate(
+                                    show = showPrivacyDialog,
+                                    title = "Data Privacy & Consent",
+                                    description = "To protect your privacy, DermTect will only send this case to a dermatologist if you allow it. " +
+                                            "This ensures that any medical information or images you share are only sent with your full consent. " +
+                                            "Your scan will never be shared with anyone else without your permission.",
+                                            primaryText = "I Agree & Continue",
+                                    primaryEnabled = consentShareToDerma, // enabled only when checked
+                                    onPrimary = {
+                                        coroutineScope.launch {
+                                            try {
+                                                isSaving = true
+                                                val uid = FirebaseAuth.getInstance().currentUser?.uid
+                                                if (uid == null || capturedImage == null) {
+                                                    Toast.makeText(context, "Please sign in and capture a photo first.", Toast.LENGTH_SHORT).show()
+                                                    return@launch
+                                                }
+
+                                                val pPctNow = (inferenceResult?.probability ?: 0f) * 100f
+                                                val shouldSendToDerma = consentShareToDerma && alerted && pPctNow >= 60f && pPctNow < 80f
+
+                                                val ok = uploadScanWithLabel(
+                                                    bitmap = capturedImage!!,
+                                                    heatmap = inferenceResult?.heatmap,
+                                                    probability = inferenceResult?.probability ?: 0f,
+                                                    prediction = modelFlag,
+                                                    status = if (shouldSendToDerma) "pending" else "completed"
+                                                )
+
+                                                if (ok) {
+                                                    hasSaved = true
+                                                    if (shouldSendToDerma) {
+                                                        Toast.makeText(context, "Sent to dermatologist for review.", Toast.LENGTH_LONG).show()
+                                                    } else {
+                                                        Toast.makeText(context, "Scan saved successfully.", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                } else {
+                                                    Toast.makeText(context, "Save failed", Toast.LENGTH_SHORT).show()
+                                                }
+                                            } finally {
+                                                isSaving = false
+                                                showPrivacyDialog = false
+                                                consentShareToDerma = false
+                                            }
+                                        }
+                                    },
+                                    secondaryText = "Cancel",
+                                    onSecondary = {
+                                        showPrivacyDialog = false
+                                        consentShareToDerma = false
+                                    },
+                                    onDismiss = {
+                                        showPrivacyDialog = false
+                                        consentShareToDerma = false
+                                    },
+                                    extraContent = {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Checkbox(
+                                                checked = consentShareToDerma,
+                                                onCheckedChange = { consentShareToDerma = it },
+                                                colors = CheckboxDefaults.colors(
+                                                    checkedColor = Color(0xFF0FB2B2),
+                                                    uncheckedColor = Color(0xFF9E9E9E)
+                                                )
+                                            )
+                                            Spacer(Modifier.width(8.dp))
+                                            Text(
+                                                "I allow DermTect to securely send this case to a dermatologist for review.",
+                                                style = MaterialTheme.typography.bodyMedium
+                                            )
+                                        }
+                                    }
+                                )
+                            }
+
 
                             if (fullImagePage != null) {
                                 androidx.compose.ui.window.Dialog(onDismissRequest = {
