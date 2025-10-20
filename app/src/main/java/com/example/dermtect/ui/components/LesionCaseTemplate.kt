@@ -44,6 +44,7 @@ import com.example.dermtect.R
 import com.example.dermtect.ui.components.BackButton
 import com.example.dermtect.ui.components.BubblesBackground
 import java.util.Locale
+import kotlin.random.Random
 
 
 @Composable
@@ -398,29 +399,125 @@ fun ResultActionCard(
     }
 }
 
+private enum class Band { LT10, LT30, LT60, LT80, GTE80 }
+
+private fun bandFor(pPct: Float): Band = when {
+    pPct < 10f -> Band.LT10
+    pPct < 30f -> Band.LT30
+    pPct < 60f -> Band.LT60
+    pPct < 80f -> Band.LT80
+    else       -> Band.GTE80
+}
+
+/** ✅ ALERTED: actual lists **/
+private val IDS_ALERTED: Map<Band, List<String>> = mapOf(
+    Band.LT10 to listOf(
+        "Common benign nevus",
+        "Atypical/Dysplastic nevus",
+        "Seborrheic keratosis",
+        "Solar lentigo",
+        "Lichen planus–like keratosis",
+        "Dermatofibroma"
+    ),
+    Band.LT30 to listOf(
+        "Solar/actinic keratosis",
+        "Squamous cell carcinoma in situ",
+        "Melanoma in situ",
+        "Superficial BCC",
+        "Nodular BCC",
+        "Indeterminate melanocytic neoplasm"
+    ),
+    Band.LT60 to listOf(
+        "Melanoma in situ, lentigo maligna",
+        "Melanoma in situ, with nevus",
+        "Melanoma invasive, superficial spreading",
+        "Basal cell carcinoma",
+        "Melanoma invasive (general)",
+        "Atypical intraepithelial melanocytic proliferation"
+    ),
+    Band.LT80 to listOf(
+        "Squamous cell carcinoma, invasive",
+        "Melanoma, NOS",
+        "Basal cell carcinoma, general malignant group",
+        "Basal cell carcinoma, nodular",
+        "Superficial basal cell carcinoma",
+        "Melanoma in situ (general)",
+        "Atypical/Dysplastic nevus"
+    ),
+    Band.GTE80 to listOf(
+        "Squamous cell carcinoma, invasive",
+        "Melanoma, NOS",
+        "Basal cell carcinoma, general malignant group",
+        "Basal cell carcinoma, nodular",
+        "Superficial basal cell carcinoma",
+        "Melanoma in situ (general)",
+        "Atypical/Dysplastic nevus"
+    )
+)
+
+/** ✅ NOT ALERTED: 10–80f uses the same benign list **/
+private val benignList = listOf(
+    "Common benign nevus",
+    "Atypical/Dysplastic nevus",
+    "Seborrheic keratosis",
+    "Solar lentigo",
+    "Lichen planus–like keratosis",
+    "Dermatofibroma"
+)
+
+private val IDS_BENIGN: Map<Band, List<String>> = mapOf(
+    Band.LT10 to benignList,
+    Band.LT30 to benignList,
+    Band.LT60 to benignList,
+    Band.LT80 to benignList,
+    Band.GTE80 to benignList // optional: same for ≥80f benign if needed
+)
+
+private fun pickThreeUnique(from: List<String>, rng: Random = Random.Default): List<String> =
+    from.shuffled(rng).distinct().take(3)
+
+private fun asReadableList(items: List<String>): String = when (items.size) {
+    0 -> ""
+    1 -> items[0]
+    2 -> "${items[0]} or ${items[1]}"
+    else -> items.dropLast(1).joinToString(", ") + ", or " + items.last()
+}
+
+private fun idsFor(probabilityPct: Float, alerted: Boolean): List<String> {
+    val band = bandFor(probabilityPct)
+    val source = if (alerted) IDS_ALERTED else IDS_BENIGN
+    return source[band] ?: emptyList()
+}
+
 fun generateTherapeuticMessage(
     probability: Float,
-    tau: Float = 0.0112f
+    tau: Float = 0.0112f,
+    rng: Random = Random.Default
 ): String {
     val pPct = probability * 100f
     val alerted = probability >= tau
     fun fmt(x: Float) = String.format(Locale.getDefault(), "%.1f", x)
 
+    val picks = pickThreeUnique(idsFor(pPct, alerted), rng)
+    val possible = if (picks.isNotEmpty()) "\n\nPossible identification: ${asReadableList(picks)}" else ""
+
     return if (alerted) {
         when {
-            pPct < 10f -> "Your result shows a very low chance of concern. This is reassuring, and there’s no need to worry. It may help to simply check your skin from time to time, just to stay aware of any changes."
-            pPct < 30f -> "Your result suggests only a low chance of concern. Everything appears fine. We encourage you to casually observe your skin every now and then, and let a doctor know if you notice something different."
-            pPct < 60f -> "We noticed some minor changes in your skin. This does not mean there is a serious issue, but talking with a doctor could provide peace of mind and helpful guidance."
-            pPct < 80f -> "Your result shows some concern. To better understand this, we recommend scheduling a skin check with a dermatologist. They can give you clearer answers and reassurance."
-            else       -> "Your result shows a higher level of concern. For your safety and peace of mind, we encourage you to visit a dermatologist soon so you can receive proper care and support."
+            pPct < 10f -> "Your result shows a very low chance of concern. This is reassuring, and there’s no need to worry. It may help to simply check your skin from time to time, just to stay aware of any changes.$possible"
+            pPct < 30f -> "Your result suggests only a low chance of concern. Everything appears fine. We encourage you to casually observe your skin every now and then, and let a doctor know if you notice something different.$possible"
+            pPct < 60f -> "We noticed some minor changes in your skin. This does not mean there is a serious issue, but talking with a doctor could provide peace of mind and helpful guidance.$possible"
+            pPct < 80f -> "Your result shows some concern. To better understand this, we recommend scheduling a skin check with a dermatologist. They can give you clearer answers and reassurance.$possible"
+            else       -> "Your result shows a higher level of concern. For your safety and peace of mind, we encourage you to visit a dermatologist soon so you can receive proper care and support.$possible"
         }
     } else {
         when {
-            pPct < 10f -> "Everything looks good. You can continue your normal skincare routine. Just keep being mindful of your skin and how it changes over time."
-            pPct < 30f -> "Your result looks safe at this time. It may be helpful to casually watch for any new changes, but otherwise you can carry on as usual."
-            pPct < 60f -> "The result is a little unclear. This doesn’t mean there is a problem, but checking in with a doctor can give you peace of mind and a more accurate understanding."
-            pPct < 80f -> "There are a few areas that look a little concerning. It would be supportive to have a dermatologist review this, so you can feel more confident about your skin health."
-            else       -> "Your result shows a higher chance of concern. To ensure your health is well taken care of, we recommend visiting a dermatologist soon for proper evaluation and guidance."
+            pPct < 10f -> "Everything looks good. You can continue your normal skincare routine. Just keep being mindful of your skin and how it changes over time.$possible"
+            pPct < 30f -> "Your result looks safe at this time. It may be helpful to casually watch for any new changes, but otherwise you can carry on as usual.$possible"
+            pPct < 60f -> "The result is a little unclear. This doesn’t mean there is a problem, but checking in with a doctor can give you peace of mind and a more accurate understanding.$possible"
+            pPct < 80f -> "There are a few areas that look a little concerning. It would be supportive to have a dermatologist review this, so you can feel more confident about your skin health.$possible"
+            else       -> "Your result shows a higher chance of concern. To ensure your health is well taken care of, we recommend visiting a dermatologist soon for proper evaluation and guidance.$possible"
         }
     }
 }
+
+
