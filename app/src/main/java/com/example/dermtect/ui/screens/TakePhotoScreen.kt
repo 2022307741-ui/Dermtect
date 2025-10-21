@@ -156,6 +156,7 @@ fun TakePhotoScreen(
     var canCapture by remember { mutableStateOf(false) }
     var showPrivacyDialog by remember { mutableStateOf(false) }
     var consentShareToDerma by remember { mutableStateOf(false) }
+    var consentSave by remember { mutableStateOf(false) }
 
     // === NEW: questionnaire state (gate PDF download) ===
     val qvm = remember { QuestionnaireViewModel() }
@@ -596,92 +597,7 @@ fun TakePhotoScreen(
                                 },  // << was: { showFullImage = true }
                                 isSaving = isSaving,
                                 onSaveClick = {
-                                    // compute fresh, in case the user waited
-                                    val pPctNow = (inferenceResult?.probability ?: 0f) * 100f
-                                    val mediumHighNow = alerted && pPctNow >= 60f && pPctNow < 80f
-
-                                    if (mediumHighNow) {
-                                        // ask for consent first
-                                        showPrivacyDialog = true
-                                    } else {
-                                    coroutineScope.launch {
-                                        try {
-                                            isSaving = true
-                                            val uid = FirebaseAuth.getInstance().currentUser?.uid
-                                            Log.d(
-                                                "TakePhotoScreen",
-                                                "onSaveClick fired. uid=$uid, hasImage=${capturedImage != null}, pred=$modelFlag"
-                                            )
-
-                                            if (uid == null) {
-                                                Toast.makeText(
-                                                    context,
-                                                    "Please sign in first.",
-                                                    Toast.LENGTH_SHORT
-                                                ).show()
-                                                return@launch
-                                            }
-                                            if (capturedImage == null) {
-                                                Toast.makeText(
-                                                    context,
-                                                    "No image to save.",
-                                                    Toast.LENGTH_SHORT
-                                                ).show()
-                                                return@launch
-                                            }
-
-                                            val pPct = (inferenceResult?.probability ?: 0f) * 100f
-                                            val shouldSendToDerma = alerted && pPct >= 60f && pPct < 80f
-
-                                            val ok = uploadScanWithLabel(
-                                                bitmap = capturedImage!!,
-                                                heatmap = inferenceResult?.heatmap,
-                                                probability = inferenceResult?.probability ?: 0f,
-                                                prediction = modelFlag,
-                                                status = if (shouldSendToDerma) "pending" else "completed"
-                                            )
-
-                                            if (ok) {
-                                                hasSaved = true
-                                                if (shouldSendToDerma) {
-                                                    Toast.makeText(context, "Case sent to dermatologist for review.", Toast.LENGTH_LONG).show()
-                                                    // optional: navController.navigate("derma_home")
-                                                } else {
-                                                    Toast.makeText(context, "Scan saved successfully.", Toast.LENGTH_SHORT).show()
-                                                }
-                                            } else {
-                                                Toast.makeText(context, "Save failed", Toast.LENGTH_SHORT).show()
-                                            }
-                                            Log.d("TakePhotoScreen", "uploadScanWithLabel -> $ok")
-                                            if (ok) {
-                                                hasSaved = true
-                                                Toast.makeText(
-                                                    context,
-                                                    "Scan saved",
-                                                    Toast.LENGTH_SHORT
-                                                ).show()
-                                            } else {
-                                                Toast.makeText(
-                                                    context,
-                                                    "Save failed (uid or rules).",
-                                                    Toast.LENGTH_SHORT
-                                                ).show()
-                                            }
-                                        } catch (t: Throwable) {
-                                            Log.e(
-                                                "TakePhotoScreen",
-                                                "Save failed with exception",
-                                                t
-                                            )
-                                            Toast.makeText(
-                                                context,
-                                                "Save failed: ${t.message}",
-                                                Toast.LENGTH_LONG
-                                            ).show()
-                                        }finally {
-                                            isSaving = false
-                                            }
-                                    }}
+                                    showPrivacyDialog = true
                                 },
                                 onRetakeClick = {
                                     inferenceResult = null
@@ -751,65 +667,98 @@ fun TakePhotoScreen(
                                 },
                                 onFindClinicClick = { onFindClinicClick() }
                             )
-                            if (showPrivacyDialog) {
-                                com.example.dermtect.ui.components.DialogTemplate(
-                                    show = showPrivacyDialog,
-                                    title = "Data Privacy & Consent",
-                                    description = "To protect your privacy, DermTect will only send this case to a dermatologist if you allow it. " +
-                                            "This ensures that any medical information or images you share are only sent with your full consent. " +
-                                            "Your scan will never be shared with anyone else without your permission.",
-                                            primaryText = "I Agree & Continue",
-                                    primaryEnabled = consentShareToDerma, // enabled only when checked
-                                    onPrimary = {
-                                        coroutineScope.launch {
-                                            try {
-                                                isSaving = true
-                                                val uid = FirebaseAuth.getInstance().currentUser?.uid
-                                                if (uid == null || capturedImage == null) {
-                                                    Toast.makeText(context, "Please sign in and capture a photo first.", Toast.LENGTH_SHORT).show()
-                                                    return@launch
-                                                }
-
-                                                val pPctNow = (inferenceResult?.probability ?: 0f) * 100f
-                                                val shouldSendToDerma = consentShareToDerma && alerted && pPctNow >= 60f && pPctNow < 80f
-
-                                                val ok = uploadScanWithLabel(
-                                                    bitmap = capturedImage!!,
-                                                    heatmap = inferenceResult?.heatmap,
-                                                    probability = inferenceResult?.probability ?: 0f,
-                                                    prediction = modelFlag,
-                                                    status = if (shouldSendToDerma) "pending" else "completed"
-                                                )
-
-                                                if (ok) {
-                                                    hasSaved = true
-                                                    if (shouldSendToDerma) {
-                                                        Toast.makeText(context, "Sent to dermatologist for review.", Toast.LENGTH_LONG).show()
-                                                    } else {
-                                                        Toast.makeText(context, "Scan saved successfully.", Toast.LENGTH_SHORT).show()
-                                                    }
-                                                } else {
-                                                    Toast.makeText(context, "Save failed", Toast.LENGTH_SHORT).show()
-                                                }
-                                            } finally {
-                                                isSaving = false
-                                                showPrivacyDialog = false
-                                                consentShareToDerma = false
+                        if (showPrivacyDialog) {
+                            com.example.dermtect.ui.components.DialogTemplate(
+                                show = showPrivacyDialog,
+                                title = "Data Privacy & Consent",
+                                description = "Before DermTect saves your scan (photo and results) to your account, we need your permission.\n\n" +
+                                        "• Your scan will be stored securely in your DermTect account.\n" +
+                                        "• You may also choose to allow us to send this case to a dermatologist for review.",
+                                primaryText = "I Agree & Save",
+                                primaryEnabled = consentSave, // ✅ must be checked to enable saving
+                                onPrimary = {
+                                    coroutineScope.launch {
+                                        try {
+                                            isSaving = true
+                                            val uid = FirebaseAuth.getInstance().currentUser?.uid
+                                            if (uid == null || capturedImage == null) {
+                                                Toast.makeText(context, "Please sign in and capture a photo first.", Toast.LENGTH_SHORT).show()
+                                                return@launch
                                             }
+
+                                            // If user consented to share, mark as 'pending'; otherwise 'completed'
+                                            val status = if (consentShareToDerma) "pending" else "completed"
+
+                                            val ok = uploadScanWithLabel(
+                                                bitmap = capturedImage!!,
+                                                heatmap = inferenceResult?.heatmap,
+                                                probability = inferenceResult?.probability ?: 0f,
+                                                prediction = modelFlag,
+                                                status = status
+                                            )
+
+                                            if (ok) {
+                                                hasSaved = true
+                                                if (status == "pending") {
+                                                    Toast.makeText(context, "Sent to dermatologist for review.", Toast.LENGTH_LONG).show()
+                                                } else {
+                                                    Toast.makeText(context, "Scan saved successfully.", Toast.LENGTH_SHORT).show()
+                                                }
+                                            } else {
+                                                Toast.makeText(context, "Save failed", Toast.LENGTH_SHORT).show()
+                                            }
+                                        } catch (t: Throwable) {
+                                            Log.e("TakePhotoScreen", "Save failed with exception", t)
+                                            Toast.makeText(context, "Save failed: ${t.message}", Toast.LENGTH_LONG).show()
+                                        } finally {
+                                            isSaving = false
+                                            // reset + close dialog
+                                            showPrivacyDialog = false
+                                            consentSave = false
+                                            consentShareToDerma = false
                                         }
-                                    },
-                                    secondaryText = "Cancel",
-                                    onSecondary = {
-                                        showPrivacyDialog = false
-                                        consentShareToDerma = false
-                                    },
-                                    onDismiss = {
-                                        showPrivacyDialog = false
-                                        consentShareToDerma = false
-                                    },
-                                    extraContent = {
+                                    }
+                                },
+                                secondaryText = "Cancel",
+                                onSecondary = {
+                                    showPrivacyDialog = false
+                                    consentSave = false
+                                    consentShareToDerma = false
+                                },
+                                onDismiss = {
+                                    showPrivacyDialog = false
+                                    consentSave = false
+                                    consentShareToDerma = false
+                                },
+                                extraContent = {
+                                    Column {
+                                        // ✅ REQUIRED: Save consent
                                         Row(
-                                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(top = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Checkbox(
+                                                checked = consentSave,
+                                                onCheckedChange = { consentSave = it },
+                                                colors = CheckboxDefaults.colors(
+                                                    checkedColor = Color(0xFF0FB2B2),
+                                                    uncheckedColor = Color(0xFF9E9E9E)
+                                                )
+                                            )
+                                            Spacer(Modifier.width(8.dp))
+                                            Text(
+                                                "I consent to store this scan (photo, heatmap, and results) in my DermTect account.",
+                                                style = MaterialTheme.typography.bodyMedium
+                                            )
+                                        }
+
+                                        // 🟡 OPTIONAL: Share to dermatologist
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(top = 8.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Checkbox(
@@ -827,11 +776,13 @@ fun TakePhotoScreen(
                                             )
                                         }
                                     }
-                                )
-                            }
+                                }
+                            )
+                        }
 
 
-                            if (fullImagePage != null) {
+
+                        if (fullImagePage != null) {
                                 androidx.compose.ui.window.Dialog(onDismissRequest = {
                                     fullImagePage = null
                                 }) {
